@@ -1,0 +1,90 @@
+# Adding code to perform choice parameter select different environment ie dev/prod to deploy application
+# repository https://github.com/MithunTechnologiesDevOps/spring-boot-mongo-docker.git
+pipeline{
+    agent any
+    parameters {
+    choice choices: ['Dev', 'Production'], description: 'Choose which environment to push changes to', name: 'DEPLOY_TO'
+  }
+  environment {
+      dockerImageName = 'spring-boot-mongo'
+      buildNumber = 'currentBuild.number'
+      image_id = "nidhi221697/${dockerImageName}:${currentBuild.number}"
+      env = "${environment}"
+  }
+  
+  stages {
+    stage('SCM Checkout'){
+        steps {
+        git credentialsId: 'GIT_CREDENTIALS', url:  'https://github.com/nidhi221697/spring-boot-mongo-docker-on-k8s.git',branch: 'master'
+        }
+    }
+    
+    stage(" Maven Clean Package"){
+        steps {
+            script { 
+                def mavenHome =  tool name: "myMavan", type: "maven"
+                def mavenCMD = "${mavenHome}/bin/mvn"
+                sh "${mavenCMD} clean package"
+            }
+    }
+    } 
+    
+    stage('Build Docker Image'){
+        steps {
+            script {
+        sh 'docker build -t dockerhandson/spring-boot-mongo .'
+            }
+        }
+    }
+    
+    stage('Push Docker Image'){
+        steps {
+            script{
+            //    def dockerImageName = "spring-boot-mongo"
+            //    def buildNumber = "currentBuild.number"
+            //    def image_id = "nidhi221697/${dockerImageName}:${currentBuild.number}" 
+                sh "docker build -t ${dockerImageName} ."
+                withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'dockerUSR', passwordVariable: 'dockerPWD')]) {
+                sh "docker tag ${dockerImageName} ${dockerUSR}/${dockerImageName}:${currentBuild.number}" 
+                sh "docker login -u ${dockerUSR} -p ${dockerPWD}"
+                sh "docker push ${dockerUSR}/${dockerImageName}:${currentBuild.number}" }
+                }
+            }
+     }
+	  
+     stage("Docker Image deploy to DEV"){
+          when {
+                allOf { 
+                    environment ignoreCase: true, name: 'DEPLOY_TO', value: 'dev'; 
+                  //  environment ignoreCase: true, name: "DEPLOY_DB", value: "true"; 
+                }
+            }
+        steps {   
+            script {
+               def dockerRun = 'docker run -d -p 84:80 --name angcon0014 ${image_id}'
+               sshagent(['dev']) {
+               sh "ssh -o StrictHostKeyChecking=no ubuntu@172.31.7.185 ${dockerRun}"
+               sh 'ls -l' 
+           }  
+            }
+        }    
+    }
+        
+      stage("Docker Image deploy to Production"){
+          when {
+                allOf { 
+                    environment ignoreCase: true, name: 'DEPLOY_TO', value: 'Production'; 
+                }
+            }
+            steps {
+                script {
+                def dockerRun = 'docker run -d -p 84:80 --name angcon0014 ${image_id}'
+                sshagent(['dev']) {
+                sh "ssh -o StrictHostKeyChecking=no ubuntu@172.31.46.230 ${dockerRun}"
+                sh 'ls -l'
+                }
+            }
+            }  
+        } 
+  }
+}
